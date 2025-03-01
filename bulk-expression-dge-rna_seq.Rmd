@@ -1,0 +1,151 @@
+# Differential Expression Analysis on PPMI RNA-Seq Project 133
+
+## Load Project count and metadata
+
+Load necessary Libraries
+
+```{r}
+library(tidyverse)
+```
+
+Load the RNA-Seq bulk expression dataset into a DataFrame
+
+```{r}
+bulk_expression_df <- read.csv("bulk_expression.csv")
+bulk_expression_df %>% remove_rownames %>% column_to_rownames(var = 'X') -> bulk_expression_df
+```
+
+Load the Metadata into another DataFrame
+
+```{r}
+metadata<-read.csv("metaDataIR3.csv")
+
+head(metadata)
+```
+
+Keep only the "Passed" (Quality Assured) samples from the Baseline in the Metadata
+
+```{r}
+metadata %>% filter(CLINICAL_EVENT == 'BL' & QCflagIR3 == 'pass') -> metadata
+```
+
+Transpose the Bulk RNA-Seq Dataset to have Samples as Rows and Genes as Columns
+
+```{r}
+bulk_expression_df %>% t -> bulk_expression_df
+```
+
+Add the Sample-ID and Diagnosis columns from the Metadata into the Bulk RNA-Seq Dataset, then replace the current rownames with the tidy ones attached from the metadata
+
+```{r}
+bulk_expression_df <- cbind(bulk_expression_df, Diagnosis = metadata$DIAGNOSIS)
+bulk_expression_df <- cbind(bulk_expression_df, Sample = metadata$Sample)
+as.data.frame(bulk_expression_df) %>% remove_rownames() %>% column_to_rownames(var = 'Sample') -> bulk_expression_df
+```
+
+## Run Differential Expression Analysis pairwise to Cohorts
+
+Print Cohorts
+
+```{r}
+levels(as.factor(metadata$DIAGNOSIS))
+```
+
+Install DESeq2
+
+```{r}
+BiocManager::install("DESeq2")
+```
+
+### Run DEA for Cohorts Control vs PD
+
+Split counts for Control and PD apart from bulk counts DataFrame as well as the diagnosis column from the metada
+
+```{r}
+library(data.table)
+counts_control_vs_pd <- bulk_expression_df %>% filter(Diagnosis == 'Control' | Diagnosis == 'PD') %>% select(!c('Diagnosis'))
+dt <- as.data.table(counts_control_vs_pd)
+counts_control_vs_pd_t <- as.data.frame(transpose(dt))
+counts_control_vs_pd_t[] <- lapply(counts_control_vs_pd_t, type.convert, as.is = TRUE)
+rownames(counts_control_vs_pd_t) <- colnames(counts_control_vs_pd)
+colnames(counts_control_vs_pd_t) <- rownames(counts_control_vs_pd)
+diagnosis_control_vs_pd <- metadata %>% filter(DIAGNOSIS == 'Control' | DIAGNOSIS == 'PD')
+```
+
+Run the DEA
+
+```{r}
+dds <- DESeq2::DESeqDataSetFromMatrix(countData=counts_control_vs_pd_t, colData=diagnosis_control_vs_pd, design=~DIAGNOSIS)
+dds <- DESeq2::DESeq(dds)
+```
+
+Show the summaries
+
+```{r}
+res <- DESeq2::results(dds)
+head(DESeq2::results(dds, tidy = TRUE))
+```
+
+```{r}
+top <- res[order(res$padj, -abs(res$log2FoldChange)),]
+top_genes <- head(rownames(top))
+```
+
+Normalized Counts for top 6 Genes
+
+```{r}
+par(mfrow=c(2, 3))
+for (gene in top_genes) {
+  DESeq2::plotCounts(dds, gene=gene, intgroup="DIAGNOSIS")
+}
+```
+
+PCA
+
+```{r}
+vsdata <- DESeq2::vst(dds, blind=FALSE)
+DESeq2::plotPCA(vsdata, intgroup="GENDER")
+```
+
+```{r}
+library(SummarizedExperiment)
+expr_data <- assay(vsdata)
+zero_var_genes <- apply(expr_data, 1, var) == 0
+filtered_exprs <- expr_data[!zero_var_genes, ]
+pca_res <- prcomp(t(filtered_exprs), center=TRUE, scale.=TRUE)
+loadings <- as.data.frame(pca_res$rotation[, 1:2])
+loadings$gene <- rownames(loadings)
+top_genes_pc1 <- loadings[order(abs(loadings$PC1), decreasing=TRUE), ][1:20, ]
+top_genes_pc2 <- loadings[order(abs(loadings$PC2), decreasing=TRUE), ][1:20, ]
+print(top_genes_pc1)
+print(top_genes_pc2)
+```
+
+```{r}
+colData(dds)$GENDER <- as.factor(colData(dds)$GENDER)
+colData(dds)$DIAGNOSIS <- as.factor(colData(dds)$DIAGNOSIS)
+design(dds) <- ~ GENDER + DIAGNOSIS
+dds <- DESeq2::DESeq(dds)
+vsd_corrected <- DESeq2::vst(dds)
+plotPCA(vsd_corrected, intgroup="GENDER")
+```
+
+```{r}
+pca <- prcomp(t(filtered_exprs), center=TRUE, scale=TRUE)
+pca_df <- data.frame(PC1 = pca$x[,1], PC2 = pca$x[,2], Gender = colData(dds)$GENDER)
+ggplot(pca_df, aes(x=PC1, y=PC2, color=Gender)) + geom_point()
+```
+
+```{r}
+library(limma)
+vsd_mat <- assay(vsdata)
+design_matrix <- model.matrix(~ colData(dds)$GENDER)
+corrected_vsd <- removeBatchEffect(vsd_mat, batch=colData(dds)$GENDER, design=design_matrix)
+
+pca_corrected <- prcomp(t(corrected_vsd), center=TRUE, scale=TRUE)
+```
+
+```{r}
+summary(aov(pca$x[,1] ~ colData(dds)$DIAGNOSIS))
+summary(aov(pca$x[,2] ~ colData(dds)$DIAGNOSIS))
+```
