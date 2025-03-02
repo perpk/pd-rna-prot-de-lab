@@ -68,6 +68,15 @@ pheatmap(subset_scaled,
          color=colorRampPalette(c("blue", "white", "red"))(50),
          main="Heatmap of most variable genes in PCA")
 
+metadata_sample_rows <- metadata %>% column_to_rownames("Sample")
+expression_with_diagnosis <- subset_scaled %>% t %>%
+  as.data.frame() %>%
+  rownames_to_column("Sample") %>%
+  left_join(metadata_sample_rows %>% select(DIAGNOSIS) %>% rownames_to_column("Sample"), by = "Sample")
+
+head(rownames(t(subset_scaled)))
+head(expression_with_diagnosis$DIAGNOSIS)
+
 # bulk_expression_df_micro <- bulk_expression_df[1:100, 58685:58785]
 # 
 # bulk_expression_df_micro <- convertToNumeric(bulk_expression_df_micro)

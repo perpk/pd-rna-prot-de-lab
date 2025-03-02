@@ -10,11 +10,11 @@ ppmi_counts <- read.csv("ppmi_counts_matrix.csv")
 bulk_expression_df <- tidyDataframe(ppmi_counts)
 
 metadata<-read.csv("metaDataIR3.csv")
-head(metadata)
 
 # Keep only passed samples - filter out the failed ones
 metadata %>% filter(QCflagIR3 == 'pass') -> metadata
-sani_samples <- str_replace_all(metadata$Sample, "-", ".")
+sani_samples <- str_replace_all(metadata$Sample, "PPMI.Phase\\d{1}.IR\\d{1}.", "")
+sani_samples <- str_replace_all(sani_samples, "-", ".")
 metadata$Sample <- sani_samples
 
 bulk_expression_df <- cbind(bulk_expression_df, Diagnosis = metadata$DIAGNOSIS)
